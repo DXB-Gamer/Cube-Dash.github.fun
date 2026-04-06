@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cube Dash</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@700;900&family=Rajdhani:wght@400;600&display=swap');
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#1a1a2e;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;overflow:hidden;font-family:'Rajdhani',sans-serif;color:#fff}
+#wrap{width:900px;max-width:99vw;position:relative}
+#hud{display:flex;justify-content:space-between;align-items:center;padding:6px 16px;background:#12122a;border:1px solid #3a3a5c;border-bottom:none}
+#title{font-family:'Orbitron',monospace;font-weight:900;font-size:1.05rem;letter-spacing:6px;color:#a0c8ff}
+.stat{font-family:'Orbitron',monospace;font-size:.72rem;letter-spacing:2px;color:#d4aa00}
+canvas{display:block;border:1px solid #3a3a5c;cursor:pointer}
+#bar-row{display:flex;align-items:center;gap:8px;padding:5px 16px;background:#12122a;border:1px solid #3a3a5c;border-top:none}
+#prog-wrap{flex:1;height:4px;background:rgba(255,255,255,.1);border-radius:2px;overflow:hidden}
+#prog{height:100%;width:0%;background:linear-gradient(90deg,#5588cc,#88aaff);border-radius:2px}
+.bl{font-family:'Orbitron',monospace;font-size:.6rem;letter-spacing:2px;color:#5588cc}
+.ov{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;z-index:30}
+#ovm{background:rgba(10,10,28,.95)}
+#ovm h1{font-family:'Orbitron',monospace;font-weight:900;font-size:2.8rem;letter-spacing:7px;color:#a0c8ff;animation:glo 2s ease-in-out infinite}
+.sub{font-size:.76rem;letter-spacing:3px;color:rgba(255,255,255,.35)}
+#pbtn{padding:12px 52px;background:transparent;border:2px solid #5588cc;color:#a0c8ff;font-family:'Orbitron',monospace;font-size:.9rem;font-weight:700;letter-spacing:5px;cursor:pointer;transition:.2s}
+#pbtn:hover{background:rgba(85,136,204,.15)}
+#ovd{background:rgba(20,8,8,.88);opacity:0;pointer-events:none;transition:opacity .2s}
+#ovd.on{opacity:1;pointer-events:all}
+#ovd h2{font-family:'Orbitron',monospace;font-size:2rem;font-weight:900;color:#dd4444;animation:shk .22s ease}
+#ovw{background:rgba(6,16,10,.88);opacity:0;pointer-events:none;transition:opacity .3s}
+#ovw.on{opacity:1;pointer-events:all}
+#ovw h2{font-family:'Orbitron',monospace;font-size:2.2rem;font-weight:900;color:#44cc77}
+.wpct{font-family:'Orbitron',monospace;font-size:.85rem;color:#d4aa00;letter-spacing:3px}
+@keyframes glo{0%,100%{opacity:.85}50%{opacity:1}}
+@keyframes shk{0%,100%{transform:translateX(0)}25%{transform:translateX(-8px)}75%{transform:translateX(8px)}}
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud">
+    <span id="title">CUBE DASH</span>
+    <span class="stat" id="spct">0%</span>
+    <span class="stat" id="ssc">SCORE: 0</span>
+    <span class="stat" id="satt">ATTEMPTS: 0</span>
+    <span id="adminbtn" style="font-family:'Orbitron',monospace;font-size:.7rem;letter-spacing:2px;color:#ff4444;cursor:pointer;border:1px solid #ff4444;padding:2px 8px;border-radius:2px">ADMIN</span>
+  </div>
+  <div style="position:relative">
+    <canvas id="cv" width="900" height="460"></canvas>
+    <div class="ov" id="ovm">
+      <h1>CUBE DASH</h1>
+      <div class="sub">GEOMETRY DASH TRIBUTE</div>
+      <button id="pbtn" onclick="startGame()">▶ PLAY</button>
+      <div class="sub" style="font-size:.66rem">SPACE · CLICK · TAP TO JUMP</div>
+    </div>
+    <div class="ov" id="ovd">
+      <h2>YOU DIED</h2>
+      <div id="dpct" style="font-family:'Orbitron',monospace;font-size:.85rem;color:rgba(255,255,255,.45);letter-spacing:3px"></div>
+      <div class="sub" style="font-size:.66rem">CLICK OR SPACE TO RETRY</div>
+    </div>
+    <div class="ov" id="ovw">
+      <h2>✓ LEVEL COMPLETE</h2>
+      <div id="wsc" class="wpct"></div>
+      <div class="sub" style="font-size:.66rem">CLICK OR SPACE TO REPLAY</div>
+    </div>
+  </div>
+  <div id="bar-row">
+    <span class="bl">NORMAL</span>
+    <div id="prog-wrap"><div id="prog"></div></div>
+    <span class="bl">CUBE DASH</span>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+const cv  = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const W   = cv.width;
+const H   = cv.height;
+
+// ── Physics (GD-tuned) ────────────────────────────────────
+// GD normal speed ≈ 3.6 blocks/s at our block size.
+// Gravity stronger than before: 0.95 px/frame² (was 0.76)
+// Jump velocity adjusted so peak height is still ~2.5 blocks
+const B      = 32;      // block size px
+const SPD    = 5.6;     // faster
+const GRAV   = 1.05;    // stronger pull
+const JVEL   = -12.8;   // slightly lower jump
+const VTERM  = 15;      // terminal fall velocity
+const CSZ    = 28;      // cube size px
+const GND    = H - B;   // ground surface Y
+
+// ── Level ─────────────────────────────────────────────────
+// Ground map: per-column boolean (true = solid floor tile)
+// Obstacles: { type:'spike'|'block', wx, wy, w, h }
+const COLS   = 180;
+const LW     = COLS * B; // level width in px
+
+let gmap = [];   // ground map
+let obst = [];   // obstacles
+
+function addSpike(col) {
+  // Spike sits on ground, tip pointing up
+  obst.push({ type:'spike', wx: col*B, wy: GND - B, w: B, h: B });
+}
+function addBlock(col, row, ww, hh) {
+  // row=1 → top surface 1 block above ground, etc.
+  obst.push({ type:'block', wx: col*B, wy: GND - row*B - hh*B, w: ww*B, h: hh*B });
+}
+function addGap(c0, c1) {
+  for (let c = c0; c < c1; c++) gmap[c] = false;
+}
+
+function buildLevel() {
+  obst = [];
+  gmap = new Array(COLS).fill(true);
+
+  // ── Section 1: Warm-up ──────────────────────────────────
+  addSpike(12);
+  addSpike(19); addSpike(20);
+  addBlock(26, 0, 3, 1);
+  addSpike(31);
+  addGap(37, 39);
+  addSpike(41);
+
+  // ── Section 2: Getting harder ───────────────────────────
+  addSpike(49); addSpike(50);
+  addBlock(55, 0, 1, 3);
+  addSpike(59);
+  addGap(64, 66);
+  addSpike(68); addSpike(69); addSpike(70);
+
+  // ── Section 3: Rhythm ───────────────────────────────────
+  addGap(81, 83);
+  addBlock(83, 0, 2, 1);
+  addSpike(87); addSpike(88);
+  addGap(93, 95);
+  addBlock(95, 0, 1, 2);
+  addSpike(99); addSpike(100);
+  addGap(105, 107);
+  addSpike(109); addSpike(110); addSpike(111);
+
+  // ── Section 4: Harder ───────────────────────────────────
+  addBlock(120, 0, 1, 2);
+  addSpike(123);
+  addGap(126, 128);
+  addSpike(130); addSpike(131);
+  addBlock(135, 0, 2, 4);
+  addGap(140, 142);
+  addSpike(144); addSpike(145); addSpike(146);
+  addGap(150, 152);
+  addSpike(154); addSpike(155);
+  addGap(158, 160);
+  addSpike(162);
+  // End clear 163–180
+}
+
+// ── State ─────────────────────────────────────────────────
+let state    = 'idle';
+let camX     = 0;
+let score    = 0;
+let attempts = 0;
+let frameN   = 0;
+
+// ── Player ────────────────────────────────────────────────
+// wx = world X position of cube left edge
+// Player is always drawn at fixed screen X = CAM_OFFSET
+const CAM_OFFSET = B * 5; // 160px from left
+
+let P = {};
+function resetPlayer() {
+  P = {
+    wx: CAM_OFFSET,         // world x (starts matching screen x since camX=0)
+    wy: GND - CSZ,          // world y (top of cube)
+    vy: 0,
+    onGround: true,
+    angle: 0,
+    dead: false,
+  };
+}
+
+// Screen position of cube (always fixed X, Y follows world Y)
+const SCR_X = CAM_OFFSET;
+function scrY() { return P.wy; }
+
+// ── Jump input ────────────────────────────────────────────
+let pressing  = false;
+let jumpUsed  = false;  // consumed this press — must release before next
+
+// ── Particles ─────────────────────────────────────────────
+let parts = [];
+function burst(sx, sy, col, n) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2;
+    const s = Math.random() * 4 + 1;
+    parts.push({ x: sx, y: sy, vx: Math.cos(a)*s, vy: Math.sin(a)*s - 2,
+                 life: 1, dec: 0.025 + Math.random()*0.03,
+                 sz: Math.random()*5 + 2, col });
+  }
+}
+function tickParts() {
+  for (let i = parts.length-1; i >= 0; i--) {
+    const p = parts[i];
+    p.x += p.vx; p.y += p.vy; p.vy += 0.2;
+    p.life -= p.dec;
+    if (p.life <= 0) parts.splice(i, 1);
+  }
+}
+function drawParts() {
+  for (const p of parts) {
+    ctx.save();
+    ctx.globalAlpha = p.life * 0.9;
+    ctx.fillStyle = p.col;
+    ctx.shadowColor = p.col; ctx.shadowBlur = 8;
+    ctx.fillRect(p.x - p.sz/2, p.y - p.sz/2, p.sz, p.sz);
+    ctx.restore();
+  }
+}
+
+// ── Stars ─────────────────────────────────────────────────
+const stars = Array.from({ length: 120 }, () => ({
+  x: Math.random() * W,
+  y: Math.random() * (GND * 0.88),
+  r: Math.random() * 1.4 + 0.3,
+  spd: Math.random() * 0.3 + 0.05,
+  a: Math.random() * 0.5 + 0.2,
+}));
+
+// ── Trail ─────────────────────────────────────────────────
+let trail = [];
+
+// ── Collision ─────────────────────────────────────────────
+// GD uses separate hitboxes:
+//   "land box"  = full cube footprint, checks if landing ON TOP of block
+//   "inner box" = inset cube, checks if INSIDE a solid → death
+//   "spike box" = tight triangle approx → death
+
+function checkLanding() {
+  // Returns the Y of the surface the cube is landing on, or null
+  if (P.vy < 0) return null; // only check when falling down
+
+  const MARG = 3;
+  const pl = P.wx + MARG, pr = P.wx + CSZ - MARG;
+  const bottom = P.wy + CSZ;
+  const prevBottom = bottom - P.vy; // where bottom was last frame
+
+  for (const o of obst) {
+    if (o.type !== 'block') continue;
+    const ol = o.wx + MARG, or2 = o.wx + o.w - MARG;
+    if (pr <= ol || pl >= or2) continue;       // no horizontal overlap
+    if (prevBottom <= o.wy + 1 && bottom >= o.wy) return o.wy; // top surface
+  }
+  return null;
+}
+
+function checkBlockDeath() {
+  // Tight inner hitbox check — are we inside a solid block from the side/bottom?
+  const IN = 6; // inset amount
+  const pl = P.wx + IN, pr = P.wx + CSZ - IN;
+  const pt = P.wy + IN, pb = P.wy + CSZ - IN;
+
+  for (const o of obst) {
+    if (o.type !== 'block') continue;
+    const ol = o.wx, or2 = o.wx + o.w;
+    const ot = o.wy, ob2 = o.wy + o.h;
+    if (pr > ol && pl < or2 && pb > ot && pt < ob2) {
+      // Overlap — but only die if NOT landing on top (handled separately)
+      const bottom = P.wy + CSZ;
+      const prevBottom = bottom - P.vy;
+      const landingOnTop = prevBottom <= o.wy + 2 && P.vy >= 0;
+      if (!landingOnTop) return true;
+    }
+  }
+  return false;
+}
+
+function checkSpikeDeath() {
+  const IN = 5;
+  const pl = P.wx + IN, pr = P.wx + CSZ - IN;
+  const pb = P.wy + CSZ;
+
+  for (const o of obst) {
+    if (o.type !== 'spike') continue;
+    const sl = o.wx + IN, sr = o.wx + o.w - IN;
+    const st = o.wy + IN * 2; // tight top margin for triangle tip
+    if (pr > sl && pl < sr && pb > st && P.wy + IN < o.wy + o.h) return true;
+  }
+  return false;
+}
+
+function checkWall() {
+  // Returns true if cube's right side is touching a block wall
+  const IN = 4;
+  const pr = P.wx + CSZ;
+  const pt = P.wy + IN, pb = P.wy + CSZ - IN;
+  for (const o of obst) {
+    if (o.type !== 'block') continue;
+    // Right side of cube touching left face of block
+    if (pr >= o.wx && pr <= o.wx + 6 && pb > o.wy + IN && pt < o.wy + o.h - IN) return true;
+  }
+  return false;
+}
+
+function checkGap() {
+  // If the cube center is over a gap column AND at/past ground level → death
+  if (P.vy < 0) return false;
+  const cx = P.wx + CSZ / 2;
+  const col = Math.floor(cx / B);
+  if (col < 0 || col >= COLS) return false;
+  return !gmap[col] && (P.wy + CSZ >= GND);
+}
+
+// ── Admin mode ────────────────────────────────────────────
+let adminMode = false;
+let flyLeft = false, flyRight = false, flyUp = false, flyDown = false;
+const ADMIN_PASS = '124578';
+
+function adminLogin() {
+  const pw = prompt('Enter admin password:');
+  if (pw === ADMIN_PASS) {
+    adminMode = true;
+    const btn = document.getElementById('adminbtn');
+    btn.textContent = '★ ADMIN';
+    btn.style.color = '#ffee00';
+    btn.style.borderColor = '#ffee00';
+    alert('Admin mode ON!\nWASD to fly. You are immortal.');
+  } else {
+    alert('Wrong password!');
+  }
+}
+
+document.getElementById('adminbtn').addEventListener('click', adminLogin);
+
+// ── Input ─────────────────────────────────────────────────
+function onDown() {
+  if (state === 'playing') {
+    pressing = true;
+  } else if (state === 'dead' || state === 'win' || state === 'idle') {
+    startGame();
+  }
+}
+function onUp() { pressing = false; jumpUsed = false; }
+
+document.addEventListener('keydown', e => {
+  if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); onDown(); }
+  if (e.code === 'KeyA') flyLeft  = true;
+  if (e.code === 'KeyD') flyRight = true;
+  if (e.code === 'KeyW') flyUp    = true;
+  if (e.code === 'KeyS') flyDown  = true;
+});
+document.addEventListener('keyup', e => {
+  if (e.code === 'Space' || e.code === 'ArrowUp') onUp();
+  if (e.code === 'KeyA') flyLeft  = false;
+  if (e.code === 'KeyD') flyRight = false;
+  if (e.code === 'KeyW') flyUp    = false;
+  if (e.code === 'KeyS') flyDown  = false;
+});
+cv.addEventListener('mousedown', e => { e.preventDefault(); onDown(); });
+cv.addEventListener('mouseup',   e => onUp());
+cv.addEventListener('touchstart', e => { e.preventDefault(); onDown(); }, { passive: false });
+cv.addEventListener('touchend',   e => { e.preventDefault(); onUp(); },   { passive: false });
+document.getElementById('pbtn').addEventListener('mousedown', e => e.stopPropagation());
+document.getElementById('pbtn').addEventListener('touchstart', e => e.stopPropagation());
+
+// ── Game flow ─────────────────────────────────────────────
+function startGame() {
+  buildLevel();
+  resetPlayer();
+  camX = 0; score = 0; frameN = 0; parts = []; trail = [];
+  pressing = false; jumpUsed = false;
+  attempts++;
+  document.getElementById('ovd').classList.remove('on');
+  document.getElementById('ovw').classList.remove('on');
+  document.getElementById('ovm').style.display = 'none';
+  document.getElementById('satt').textContent = 'ATTEMPTS: ' + attempts;
+  document.getElementById('prog').style.width = '0%';
+  state = 'playing';
+}
+
+function die() {
+  if (P.dead || adminMode) return;
+  P.dead = true; state = 'dead';
+  burst(SCR_X + CSZ/2, P.wy + CSZ/2, '#ff0055', 22);
+  burst(SCR_X + CSZ/2, P.wy + CSZ/2, '#ffe000', 14);
+  setTimeout(() => startGame(), 800);
+}
+
+function winGame() {
+  state = 'win';
+  document.getElementById('wsc').textContent = 'SCORE: ' + score;
+  burst(W/2, H/2, '#33ff88', 36);
+  burst(W/2, H/2, '#00eeff', 24);
+  setTimeout(() => document.getElementById('ovw').classList.add('on'), 200);
+}
+
+// ── Update ────────────────────────────────────────────────
+function update() {
+  if (state !== 'playing') return;
+  frameN++; score++;
+
+  // World scrolls, player world X advances with it
+  camX  += SPD;
+  P.wx   = CAM_OFFSET + camX;
+
+  // Jump: fires on ground OR on wall
+  const onWall = !P.onGround && checkWall();
+  if (pressing && !jumpUsed && (P.onGround || onWall)) {
+    P.vy       = JVEL;
+    P.onGround = false;
+    jumpUsed   = true;
+    if (onWall) burst(SCR_X + CSZ, P.wy + CSZ/2, '#ffaa00', 10);
+    else        burst(SCR_X + CSZ/2, P.wy + CSZ, '#88aaff', 8);
+  }
+
+  // Gravity
+  P.vy = Math.min(P.vy + GRAV, VTERM);
+  P.wy += P.vy;
+
+  P.onGround = false;
+
+  // ── Ground floor collision ──
+  if (P.vy >= 0) {
+    const lc = Math.floor(P.wx / B);
+    const rc = Math.floor((P.wx + CSZ - 1) / B);
+    let solid = false;
+    for (let c = lc; c <= rc; c++) {
+      if (c >= 0 && c < COLS && gmap[c]) { solid = true; break; }
+    }
+    if (solid && P.wy + CSZ >= GND) {
+      P.wy       = GND - CSZ;
+      P.vy       = 0;
+      P.onGround = true;
+      jumpUsed   = false;
+      P.angle    = Math.round(P.angle / 90) * 90; // snap to 90°
+    }
+  }
+
+  // ── Platform top-landing ──
+  if (!P.dead) {
+    const landY = checkLanding();
+    if (landY !== null) {
+      P.wy       = landY - CSZ;
+      P.vy       = 0;
+      P.onGround = true;
+      jumpUsed   = false;
+      P.angle    = Math.round(P.angle / 90) * 90;
+    }
+  }
+
+  // ── Wall contact — reset jump so wall jump can fire ──
+  if (!P.onGround && checkWall()) jumpUsed = false;
+
+  // ── Admin fly mode ──
+  if (adminMode) {
+    const FLY_SPD = 5;
+    if (flyLeft)  { camX -= FLY_SPD * 2; P.wx = CAM_OFFSET + camX; }
+    if (flyRight) { camX += FLY_SPD * 2; P.wx = CAM_OFFSET + camX; }
+    if (flyUp)    P.wy -= FLY_SPD;
+    if (flyDown)  P.wy += FLY_SPD;
+    P.wy = Math.max(0, Math.min(P.wy, GND - CSZ));
+    camX = Math.max(0, camX);
+    P.onGround = false; P.vy = 0;
+    P.angle = (P.angle + 3) % 360;
+    trail.push({ x: SCR_X, y: P.wy });
+    if (trail.length > 9) trail.shift();
+    if (camX >= LW - W - B * 2) { winGame(); return; }
+    const pct = Math.min(100, Math.round((camX / (LW - W)) * 100));
+    document.getElementById('prog').style.width = pct + '%';
+    document.getElementById('spct').textContent = pct + '%';
+    document.getElementById('ssc').textContent  = 'SCORE: ' + score;
+    tickParts(); return;
+  }
+
+  // ── Death checks (skipped in admin mode) ──
+  if (!P.dead) {
+    if (checkBlockDeath())  { die(); return; }
+    if (checkSpikeDeath())  { die(); return; }
+    if (checkGap())         { die(); return; }
+    if (P.wy > H + 80)      { die(); return; }
+  }
+
+  // ── Ceiling bounce ──
+  if (P.wy < 0) { P.wy = 0; P.vy = Math.abs(P.vy) * 0.2; }
+
+  // ── Rotation (air only, 7°/frame like GD) ──
+  if (!P.onGround) P.angle = (P.angle + 7) % 360;
+
+  // ── Trail ──
+  trail.push({ x: SCR_X, y: P.wy });
+  if (trail.length > 9) trail.shift();
+
+  // ── Win condition ──
+  if (camX >= LW - W - B * 2) { winGame(); return; }
+
+  // ── HUD ──
+  const pct = Math.min(100, Math.round((camX / (LW - W)) * 100));
+  document.getElementById('prog').style.width = pct + '%';
+  document.getElementById('spct').textContent  = pct + '%';
+  document.getElementById('ssc').textContent   = 'SCORE: ' + score;
+
+  tickParts();
+}
+
+// ── Draw ──────────────────────────────────────────────────
+function drawBG() {
+  const bg = ctx.createLinearGradient(0, 0, 0, GND);
+  bg.addColorStop(0, '#1a1a2e'); bg.addColorStop(1, '#16213e');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, W, GND);
+  ctx.fillStyle = '#0f0f1a';
+  ctx.fillRect(0, GND, W, H - GND);
+
+  // Subtle grid
+  ctx.strokeStyle = 'rgba(255,255,255,.03)'; ctx.lineWidth = 1;
+  const gs = B * 2, off = camX % gs;
+  for (let x = -(off % gs); x < W; x += gs) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, GND); ctx.stroke();
+  }
+  for (let y = 0; y < GND; y += gs) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+
+  // Stars
+  for (const s of stars) {
+    if (state === 'playing') { s.x -= s.spd * SPD * 0.14; if (s.x < 0) s.x = W; }
+    ctx.save();
+    ctx.globalAlpha = s.a * 0.7;
+    ctx.fillStyle = '#cce'; 
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+}
+
+function drawFloor() {
+  const c0 = Math.max(0, Math.floor(camX / B) - 1);
+  const c1 = Math.min(COLS, Math.ceil((camX + W) / B) + 1);
+  for (let c = c0; c < c1; c++) {
+    if (!gmap[c]) continue;
+    const sx = c * B - camX;
+    ctx.fillStyle = '#2a2a4a';
+    ctx.fillRect(sx, GND, B, B);
+    ctx.strokeStyle = '#4a4a7a'; ctx.lineWidth = 1;
+    ctx.strokeRect(sx + 0.5, GND + 0.5, B - 1, B - 1);
+    ctx.strokeStyle = 'rgba(255,255,255,.06)'; ctx.lineWidth = 0.5;
+    ctx.strokeRect(sx + 6, GND + 6, B - 12, B - 12);
+  }
+  // Ground line
+  ctx.strokeStyle = '#6688cc'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(0, GND); ctx.lineTo(W, GND); ctx.stroke();
+}
+
+function drawObstacles() {
+  for (const o of obst) {
+    const sx = o.wx - camX;
+    if (sx > W + B * 2 || sx + o.w < -B * 2) continue;
+
+    if (o.type === 'block') {
+      ctx.fillStyle = '#3a3a1a';
+      ctx.fillRect(sx, o.wy, o.w, o.h);
+      ctx.strokeStyle = '#ccaa00'; ctx.lineWidth = 2;
+      ctx.strokeRect(sx, o.wy, o.w, o.h);
+      ctx.strokeStyle = 'rgba(200,170,0,.2)'; ctx.lineWidth = 0.5;
+      for (let bx = sx; bx <= sx + o.w; bx += B) {
+        ctx.beginPath(); ctx.moveTo(bx, o.wy); ctx.lineTo(bx, o.wy + o.h); ctx.stroke();
+      }
+      for (let by = o.wy; by <= o.wy + o.h; by += B) {
+        ctx.beginPath(); ctx.moveTo(sx, by); ctx.lineTo(sx + o.w, by); ctx.stroke();
+      }
+    }
+
+    if (o.type === 'spike') {
+      ctx.fillStyle = '#cc3333';
+      ctx.strokeStyle = '#ee5555'; ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(sx + 2, o.wy + o.h);
+      ctx.lineTo(sx + o.w - 2, o.wy + o.h);
+      ctx.lineTo(sx + o.w / 2, o.wy + 2);
+      ctx.closePath();
+      ctx.fill(); ctx.stroke();
+    }
+  }
+
+  // Gap pit
+  const c1 = Math.min(COLS, Math.ceil((camX + W) / B) + 1);
+  for (let c = Math.max(0, Math.floor(camX / B)); c < c1; c++) {
+    if (gmap[c]) continue;
+    const sx = c * B - camX;
+    ctx.fillStyle = '#0a0a14';
+    ctx.fillRect(sx, GND, B, H - GND);
+    ctx.strokeStyle = 'rgba(100,80,80,.3)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(sx, GND); ctx.lineTo(sx, H); ctx.stroke();
+  }
+}
+
+function drawPortal() {
+  const px = LW - camX - B * 4;
+  if (px < -B * 3 || px > W + B) return;
+  const ph = B * 4, pw = B + 6;
+  const hue = (frameN * 2) % 360;
+  ctx.save();
+  ctx.strokeStyle = `hsl(${hue},70%,60%)`;
+  ctx.fillStyle   = `hsla(${hue},70%,60%,.07)`;
+  ctx.lineWidth = 2.5;
+  ctx.fillRect(px, GND - ph, pw, ph);
+  ctx.strokeRect(px, GND - ph, pw, ph);
+  ctx.globalAlpha = 0.35; ctx.lineWidth = 1;
+  for (let i = 0; i < 4; i++) {
+    const yy = GND - ph + ((frameN * 2 + i * 24) % ph);
+    ctx.beginPath(); ctx.moveTo(px, yy); ctx.lineTo(px + pw, yy); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawTrail() {
+  for (let i = 0; i < trail.length; i++) {
+    const t = trail[i];
+    const alpha = (i / trail.length) * 0.2;
+    const sz    = CSZ * (i / trail.length) * 0.75;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = '#88aaff';
+    ctx.fillRect(t.x + (CSZ - sz) / 2, t.y + (CSZ - sz) / 2, sz, sz);
+    ctx.restore();
+  }
+}
+
+function drawCube() {
+  if (P.dead) return;
+  const cx = SCR_X + CSZ / 2;
+  const cy = P.wy  + CSZ / 2;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(P.angle * Math.PI / 180);
+
+  // Fill
+  const g = ctx.createLinearGradient(-CSZ/2, -CSZ/2, CSZ/2, CSZ/2);
+  g.addColorStop(0, '#6699ff');
+  g.addColorStop(1, '#3355cc');
+  ctx.fillStyle = g;
+  ctx.fillRect(-CSZ/2, -CSZ/2, CSZ, CSZ);
+
+  // Border
+  ctx.strokeStyle = '#aabbff'; ctx.lineWidth = 2;
+  ctx.strokeRect(-CSZ/2, -CSZ/2, CSZ, CSZ);
+
+  // Inner X detail
+  ctx.strokeStyle = 'rgba(255,255,255,.4)'; ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.moveTo(-CSZ/2+5, -CSZ/2+5); ctx.lineTo(CSZ/2-5,  CSZ/2-5);
+  ctx.moveTo( CSZ/2-5, -CSZ/2+5); ctx.lineTo(-CSZ/2+5, CSZ/2-5);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function draw() {
+  ctx.clearRect(0, 0, W, H);
+  drawBG();
+  if (state !== 'idle') {
+    drawFloor();
+    drawObstacles();
+    drawPortal();
+    drawTrail();
+    drawCube();
+  } else {
+    drawFloor();
+  }
+  drawParts();
+}
+
+// ── Main loop ─────────────────────────────────────────────
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+
+buildLevel();
+loop();
+</script>
+</body>
+</html>
